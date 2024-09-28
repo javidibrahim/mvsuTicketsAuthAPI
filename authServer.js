@@ -1,6 +1,6 @@
 //authServer.js
 const express = require('express');
-const corsOptions = require('../server/config/corsOptions');
+const corsOptions = require('./corsOptions');
 const bodyParser = require('body-parser');
 const cookieParser = require('cookie-parser');
 const cors = require('cors');

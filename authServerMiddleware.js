@@ -1,10 +1,11 @@
 // authServerMiddleware.js
-const User = require('../server/models/users');
 const jwt = require('jsonwebtoken');
+const axios = require('axios');
 const {generateToken, sendVerificationLink} = require("./authServerControllers");
 const path = require('path');
 require('dotenv').config({ path: path.resolve(process.cwd(), '.env') });
 
+const BackEndURL = process.env.BACKEND_URL;
 const accessTokenSecret = process.env.ACCESS_TOKEN_SECRET;
 
 exports.authenticateToken = async (req, res, next) => {
@@ -31,9 +32,12 @@ exports.authenticateToken = async (req, res, next) => {
 
 exports.isAdmin = async (req, res, next) => {
     try {
-        const userInfo = await User.findById(req.user.userID);
-        if (!userInfo || userInfo.userType !== 'admin') {
-            console.log('Admin info not valid');
+        const user = axios.get(`${BackEndURL}/user/profile`, {
+            params: {
+                userID: req.user.userID,
+            }
+        })
+        if (!user || user.userType !== 'admin') {
             return res.sendStatus(403);
         }
         next();
@@ -45,19 +49,23 @@ exports.isAdmin = async (req, res, next) => {
 
 exports.isVerified = async (req, res, next) => {
     try {
-        const { emailAddress } = req.body;
-        const user = await User.findByEmail(emailAddress);
+        const { email } = req.body;
+        const user = await axios.get(`${BackEndURL}/user/profile`, {
+            params: {
+                emailAddress: email,
+            }
+        })
         if (!user) {
             return res.status(404).json({ error: 'User not found.', errorType: 'user_not_found' });
         }
-        const isVerified = await User.isEmailVerified(emailAddress);
-        if (!isVerified) {
+
+        if (user.isVerified === 0) {
             const userData = {
                 userID: user.userID,
-                emailAddress,
+                email,
             };
             const token = await generateToken(userData, process.env.EMAIL_TOKEN_SECRET, '30m');
-            const linkSent = await sendVerificationLink(token, emailAddress);
+            const linkSent = await sendVerificationLink(token, email);
             if (!linkSent) {
                 return res.status(500).json({ error: 'Failed to send verification link.', errorType: 'email_send_failure' });
             }

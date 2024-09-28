@@ -1,34 +1,45 @@
 // authServer/authController.js
-const User = require('../server/models/users');
 const jwt = require('jsonwebtoken');
-const { sendEmail } = require('../server/config/emailService');
 const path = require('path');
 require('dotenv').config({ path: path.resolve(process.cwd(), '.env') });
+const axios = require('axios');
 
+const BackEndURL = process.env.BACKEND_URL;
 const refreshTokenSecret = process.env.ACCESS_TOKEN_REFRESH;
 const accessTokenSecret = process.env.ACCESS_TOKEN_SECRET;
 const emailTokenSecret = process.env.EMAIL_TOKEN_SECRET;
-const baseAuthUrl = process.env.BASE_AUTH_URL;
 const baseFrontURL = process.env.BASE_FRONT_URL;
 
+
+/**
+ * @description getUserInfo fetch user information from backend after authentication
+ * @access Public
+ */
+exports.getUserInfo = async (req, res) => {
+  try {
+    // Now using the user ID from the `req.user` object set by authenticateToken
+    const response = await axios.get(`${BackEndURL}/user/profile`, {
+      params: {
+        userID: req.user.userID,
+      }
+    });
+    res.status(200).json(response.data);
+  } catch (error) {
+    console.error('Error fetching user info from backend:', error.message);
+    res.status(500).json({ error: 'Failed to validate user session' });
+  }
+};
 
 exports.login = async (req, res) => {
   const { emailAddress, password } = req.body;
   try {
-    const user = await User.findByEmail(emailAddress);
-    if (!user) {
-      return res.status(401).json({ error: 'Email or password is incorrect.', errorType: 'invalid_credentials' });
-    }
-    const isValidPassword = await User.comparePasswords(password, user.password);
-    if (!isValidPassword) {
+    const response = await axios.post(`${BackEndURL}/user/login`, {emailAddress, password});
+    const { userID, userType } = response.data;
+    if (!userID) {
       return res.status(401).json({ error: 'Email or password is incorrect.', errorType: 'invalid_credentials' });
     }
 
-    const userData = {
-      userID: user.userID,
-      emailAddress: emailAddress,
-      userType: user.userType,
-    };
+    const userData = { userID, emailAddress, userType };
     const accessToken = await generateToken(userData, accessTokenSecret, '30m');
     const refreshToken = await generateToken(userData, refreshTokenSecret, '7d');
     res.cookie('accessToken', accessToken, {
@@ -47,7 +58,7 @@ exports.login = async (req, res) => {
     });
     res.status(200).json({
       message: 'Logged in successfully',
-      user: { userType: user.userType } // Include userType in response
+      user: { userType: userData.userType}
     });
   } catch (e) {
     console.error('Login error:', e);
@@ -55,18 +66,18 @@ exports.login = async (req, res) => {
   }
 };
 
-
 exports.register = async (req, res) => {
-  const { firstName, lastName, emailAddress, password } = req.body;
+  const { firstName, lastName, emailAddress, password, phoneNumber} = req.body;
   try {
-    const userData = { firstName, lastName, emailAddress, password };
-    const userID = await User.create(userData);
+    const userData = { firstName, lastName, emailAddress, password, phoneNumber };
+    const response = await axios.post(`${BackEndURL}/user/register`, {userData});
+    const {userID} = response.data;
     if (!userID) {
       return res.status(500).json({ error: 'registration_error' });
     }
     const user = {
       userID: userID,
-      emailAddress: emailAddress,
+      emailAddress: req.body.emailAddress,
     };
     const token = await generateToken(user, emailTokenSecret, '30m');
     const linkSent = await sendVerificationLink(token, emailAddress);
@@ -86,25 +97,42 @@ exports.logout = async (req, res) => {
   res.status(200).json({ message: 'Logged out successfully' });
 };
 
+// Frontend - verifyEmail function
 exports.verifyEmail = async (req, res) => {
   console.log('Verifying email...');
   let message, status = 'fail';
   try {
     const token = req.params.token;
-    const decodedToken = jwt.verify(token, emailTokenSecret);
+    const decodedToken = jwt.verify(token, emailTokenSecret); // Verify the token
     const decodedEmail = decodedToken.emailAddress;
 
-    if (!await User.findByEmail(decodedEmail)) {
+    const response = await axios.get(`${BackEndURL}/user/profile`, {
+      params: {
+        emailAddress: decodedEmail,
+      }
+    });
+
+    const { userID, verified } = response.data;
+
+    if (!userID) {
       message = 'No user found with this email.';
-    } else if (await User.isEmailVerified(decodedEmail)) {
+    } else if (verified) {
       message = 'User with this email has already been verified.';
     } else {
-      await User.verifyEmail(decodedEmail);
-      message = 'Email has been verified successfully.';
-      status = 'success';
+      const verifyResponse = await axios.put(`${BackEndURL}/user/verifyEmail`, {
+        emailAddress: decodedEmail
+      });
+
+      if (!verifyResponse || verifyResponse.status !== 200) {
+        message = 'Failed to verify the email.';
+        status = 'fail';
+      } else {
+        message = 'Email has been verified successfully.';
+        status = 'success';
+      }
     }
   } catch (error) {
-    console.error('Error during email verification:', error);
+    console.error('Error during email verification:', error.message);
     message = 'Something went wrong during email verification.';
     status = 'fail';
 
@@ -117,6 +145,7 @@ exports.verifyEmail = async (req, res) => {
 
   return res.redirect(`${baseFrontURL}/verification-result?status=${status}&message=${encodeURIComponent(message)}`);
 };
+
 
 async function generateToken(payload, secretKey, expiresIn) {
   try {
@@ -131,7 +160,7 @@ exports.generateToken = generateToken;
 
 async function sendVerificationLink(token, email) {
   try {
-    const url = `${baseAuthUrl}/api/auth/verify/${token}`;
+    const url = `${BackEndURL}/api/auth/verify/${token}`;
     const emailSubject = 'Verify your getValleyTickets account.';
 
     const emailContent = `
@@ -139,11 +168,16 @@ async function sendVerificationLink(token, email) {
           <p>Please click the following link to verify your email:</p>
           <a href="${url}">Verify Email</a>
         `;
-    const emailSent = await sendEmail(email, emailSubject, emailContent);
-    if (!emailSent) {
+    const emailSent = axios.post(`${BackEndURL}/email/verify/sendVerification`, {
+      email,
+      emailSubject,
+      emailContent,
+    })
+    if (emailSent.status !== 200) {
       console.log('Error sending verification link', emailSent);
       return false;
     }
+
     console.log(`Verification link sent to ${email}`);
     return true;
   } catch (e) {

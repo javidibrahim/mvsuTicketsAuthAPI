@@ -6,8 +6,8 @@ const {
     logout,
     register,
     verifyEmail,
+    getUserInfo,
 } = require('./authServerControllers');
-const { getUserInfo } = require('../server/controllers/users');
 const { authenticateToken, isVerified } = require('./authServerMiddleware');
 
 /**
