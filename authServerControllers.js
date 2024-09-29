@@ -34,7 +34,7 @@ exports.login = async (req, res) => {
       return res.status(401).json({ error: 'Email or password is incorrect.', errorType: 'invalid_credentials' });
     }
 
-    console.log("Response in auth server for login", JSON.stringify(response));
+    console.log("Response in auth server for login", response.data);
 
     const userData = { userID, emailAddress, userType };
     const accessToken = await generateToken(userData, accessTokenSecret, '30m');
@@ -58,7 +58,7 @@ exports.login = async (req, res) => {
       user: { userType: userData.userType}
     });
   } catch (e) {
-    console.error('Login error:', e);
+    console.error('Login error:', e.message);
     return res.status(500).json({ error: 'Internal server error' });
   }
 };
