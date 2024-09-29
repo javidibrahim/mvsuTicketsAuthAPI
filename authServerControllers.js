@@ -28,38 +28,52 @@ exports.getUserInfo = async (req, res) => {
 exports.login = async (req, res) => {
   const { emailAddress, password } = req.body;
   try {
-    const response = await axios.post(`${BackEndURL}/user/login`, {emailAddress, password});
+    // Make a request to the backend service to verify credentials
+    const response = await axios.post(`${BackEndURL}/user/login`, { emailAddress, password });
+
     const { userID, userType } = response.data;
     if (!userID) {
       return res.status(401).json({ error: 'Email or password is incorrect.', errorType: 'invalid_credentials' });
     }
 
+    // Generate tokens and set cookies
     const userData = { userID, emailAddress, userType };
     const accessToken = await generateToken(userData, accessTokenSecret, '30m');
     const refreshToken = await generateToken(userData, refreshTokenSecret, '7d');
+
     res.cookie('accessToken', accessToken, {
       httpOnly: true,
-      maxAge: 60 * 60 * 1000 * 0.5, // expires 30 minutes
+      maxAge: 60 * 60 * 1000 * 0.5,  // Expires in 30 minutes
       sameSite: 'None',
       secure: true,
       path: '/',
     });
+
     res.cookie('refreshToken', refreshToken, {
       httpOnly: true,
-      maxAge: 60 * 60 * 1000 * 24 * 7, // expires 7 days
+      maxAge: 60 * 60 * 1000 * 24 * 7,  // Expires in 7 days
       sameSite: 'None',
       secure: true,
       path: '/',
     });
-    res.status(200).json({
+
+    // Return success with user type
+    return res.status(200).json({
       message: 'Logged in successfully',
-      user: { userType: userData.userType}
+      user: { userType: userData.userType },
     });
   } catch (e) {
-    console.error('Login error:', e);
+    // Log the exact error for debugging
+    console.error('Login error:', e.message);
+
+    if (e.response && e.response.status === 401) {
+      return res.status(401).json({ error: 'Invalid credentials', errorType: 'invalid_credentials' });
+    }
+
     return res.status(500).json({ error: 'Internal server error' });
   }
 };
+
 
 exports.register = async (req, res) => {
   const { firstName, lastName, emailAddress, password, phoneNumber} = req.body;
