@@ -49,12 +49,16 @@ exports.isAdmin = async (req, res, next) => {
 
 exports.isVerified = async (req, res, next) => {
     try {
-        const { email } = req.body;
+        const { emailAddress } = req.body;
+        if (!emailAddress) {
+            return res.status(400).json({ error: 'Email is required' });
+        }
+        console.log("Checking verification for emailAddress:", emailAddress);
+
         const response = await axios.get(`${BackEndURL}/user/profile`, {
-            params: {
-                emailAddress: email,
-            }
+            params: { emailAddress }
         })
+
         const user = response.data;
         if (!user) {
             return res.status(404).json({ error: 'User not found.', errorType: 'user_not_found' });
@@ -64,10 +68,10 @@ exports.isVerified = async (req, res, next) => {
         if (user.isVerified === 0) {
             const userData = {
                 userID: user.userID,
-                email,
+                emailAddress,
             };
             const token = await generateToken(userData, process.env.EMAIL_TOKEN_SECRET, '30m');
-            const linkSent = await sendVerificationLink(token, email);
+            const linkSent = await sendVerificationLink(token, emailAddress);
             if (!linkSent) {
                 return res.status(500).json({ error: 'Failed to send verification link.', errorType: 'email_send_failure' });
             }
