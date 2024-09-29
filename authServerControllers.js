@@ -11,13 +11,8 @@ const emailTokenSecret = process.env.EMAIL_TOKEN_SECRET;
 const baseFrontURL = process.env.BASE_FRONT_URL;
 
 
-/**
- * @description getUserInfo fetch user information from backend after authentication
- * @access Public
- */
 exports.getUserInfo = async (req, res) => {
   try {
-    // Now using the user ID from the `req.user` object set by authenticateToken
     const response = await axios.get(`${BackEndURL}/user/profile`, {
       params: {
         userID: req.user.userID,
