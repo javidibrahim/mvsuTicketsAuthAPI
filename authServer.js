@@ -8,6 +8,7 @@ const authRoutes = require('./authServerRoutes');
 const authServer = express();
 
 authServer.use(cors(corsOptions));
+authServer.options('*', cors(corsOptions));
 authServer.use(bodyParser.json());
 authServer.use(cookieParser());
 authServer.use('/api/auth', authRoutes);
