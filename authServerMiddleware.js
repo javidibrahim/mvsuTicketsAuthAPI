@@ -50,14 +50,16 @@ exports.isAdmin = async (req, res, next) => {
 exports.isVerified = async (req, res, next) => {
     try {
         const { email } = req.body;
-        const user = await axios.get(`${BackEndURL}/user/profile`, {
+        const response = await axios.get(`${BackEndURL}/user/profile`, {
             params: {
                 emailAddress: email,
             }
         })
+        const user = response.data;
         if (!user) {
             return res.status(404).json({ error: 'User not found.', errorType: 'user_not_found' });
         }
+        console.log("User data", user);
 
         if (user.isVerified === 0) {
             const userData = {
@@ -73,7 +75,7 @@ exports.isVerified = async (req, res, next) => {
         }
         next();
     } catch (e) {
-        console.error('Verification error:', e);
+        console.error('Error verifying user:', e.response ? e.response.data : e.message);
         return res.status(500).json({ error: 'Internal server error', errorType: 'internal_error' });
     }
 };
