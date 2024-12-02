@@ -5,10 +5,11 @@ require('dotenv').config({ path: path.resolve(process.cwd(), '.env') });
 const axios = require('axios');
 
 const BackEndURL = process.env.BACKEND_URL;
+const AuthServerURL = process.env.BACKEND_AUTH_URL;
 const refreshTokenSecret = process.env.ACCESS_TOKEN_REFRESH;
 const accessTokenSecret = process.env.ACCESS_TOKEN_SECRET;
 const emailTokenSecret = process.env.EMAIL_TOKEN_SECRET;
-const baseFrontURL = process.env.BASE_FRONT_URL;
+const FRONTEND_URL = process.env.VITE_FRONTEND_URL;
 
 
 exports.getUserInfo = async (req, res) => {
@@ -29,19 +30,14 @@ exports.login = async (req, res) => {
   const { emailAddress, password } = req.body;
   try {
     const response = await axios.post(`${BackEndURL}/user/login`, {emailAddress, password});
-    const { userID, userType } = response.data;
-    if (!userID) {
-      return res.status(401).json({ error: 'Email or password is incorrect.', errorType: 'invalid_credentials' });
-    }
-
-    console.log("Response in auth server for login", response.data);
+    const {userID, userType } = response.data;
 
     const userData = { userID, emailAddress, userType };
     const accessToken = await generateToken(userData, accessTokenSecret, '30m');
     const refreshToken = await generateToken(userData, refreshTokenSecret, '7d');
     res.cookie('accessToken', accessToken, {
       httpOnly: true,
-      maxAge: 60 * 60 * 1000 * 0.5, // expires 30 minutes
+      maxAge: 60 * 60 * 1000 * 3 , // expires 3 hours
       sameSite: 'None',
       secure: true,
       path: '/',
@@ -59,6 +55,12 @@ exports.login = async (req, res) => {
     });
   } catch (e) {
     console.error('Login error:', e.message);
+    if (e.response) {
+      // Pass through the status code and error message from the first endpoint
+      return res.status(e.response.status).json({
+        error: e.response.data.message || e.response.data.error
+      });
+    }
     return res.status(500).json({ error: 'Internal server error' });
   }
 };
@@ -68,15 +70,18 @@ exports.register = async (req, res) => {
   try {
     const userData = { firstName, lastName, emailAddress, password, phoneNumber };
     const response = await axios.post(`${BackEndURL}/user/register`, {userData});
-    const {userID} = response.data;
-    if (!userID) {
+    if (!response.data.success) {
       return res.status(500).json({ error: 'registration_error' });
     }
     const user = {
-      userID: userID,
+      userID: response.data.userID,
       emailAddress: req.body.emailAddress,
     };
+
     const token = await generateToken(user, emailTokenSecret, '30m');
+    if (!token) {
+      return res.status(500).json({ error: 'token_error' });
+    }
     const linkSent = await sendVerificationLink(token, emailAddress);
     if (!linkSent) {
       return res.status(500).json({ error: 'verification_link_error' });
@@ -96,51 +101,78 @@ exports.logout = async (req, res) => {
 
 // Frontend - verifyEmail function
 exports.verifyEmail = async (req, res) => {
-  console.log('Verifying email...');
-  let message, status = 'fail';
+  let message;
+  let status = 'fail';
+
   try {
     const token = req.params.token;
-    const decodedToken = jwt.verify(token, emailTokenSecret); // Verify the token
-    const decodedEmail = decodedToken.emailAddress;
 
-    const response = await axios.get(`${BackEndURL}/user/profile`, {
-      params: {
-        emailAddress: decodedEmail,
-      }
-    });
-
-    const { userID, verified } = response.data;
-
-    if (!userID) {
-      message = 'No user found with this email.';
-    } else if (verified) {
-      message = 'User with this email has already been verified.';
-    } else {
-      const verifyResponse = await axios.put(`${BackEndURL}/user/verifyEmail`, {
-        emailAddress: decodedEmail
-      });
-
-      if (!verifyResponse || verifyResponse.status !== 200) {
-        message = 'Failed to verify the email.';
-        status = 'fail';
+    // **Step 1: Verify the token and extract the email address**
+    let emailAddress;
+    try {
+      const decodedToken = jwt.verify(token, emailTokenSecret);
+      emailAddress = decodedToken.emailAddress;
+    } catch (error) {
+      // Handle token verification errors
+      if (error.name === 'JsonWebTokenError') {
+        message = 'Invalid token. Please request a new verification email.';
+      } else if (error.name === 'TokenExpiredError') {
+        message = 'Verification link has expired. Please request a new verification email.';
       } else {
-        message = 'Email has been verified successfully.';
-        status = 'success';
+        message = 'Token verification failed. Please try again.';
+      }
+      console.error('Token verification error:', error.message);
+      return res.redirect(`${FRONTEND_URL}/verification-result?status=${status}&message=${encodeURIComponent(message)}`);
+    }
+
+    // **Step 2: Fetch the user profile**
+    let user;
+    try {
+      const userResponse = await axios.get(`${BackEndURL}/user/profile`, {
+        params: { emailAddress },
+      });
+      user = userResponse.data.user;
+    } catch (error) {
+      console.error('Error fetching user profile:', error.message);
+      message = 'Error fetching user profile.';
+      return res.redirect(`${FRONTEND_URL}/verification-result?status=${status}&message=${encodeURIComponent(message)}`);
+    }
+
+    // **Step 3: Check if user exists and is already verified**
+    if (!user || !user.userID) {
+      console.log('No user found with this email.');
+      message = 'No user found with this email.';
+    } else if (user.verified === 1) {
+      console.log('User with this email has already been verified.');
+      message = 'Your email is already verified.';
+      status = 'success';
+    } else {
+      // **Step 4: Verify the user's email**
+      try {
+        const verifyResponse = await axios.put(`${BackEndURL}/user/verifyEmail`, {
+          emailAddress,
+        });
+        if (verifyResponse && verifyResponse.status === 200) {
+          message = 'Email has been verified successfully.';
+          status = 'success';
+        } else {
+          console.log('Failed to verify the email.', verifyResponse);
+          message = 'Failed to verify the email.';
+        }
+      } catch (error) {
+        console.error('Error verifying email:', error.message);
+        message = 'Error occurred while verifying email.';
       }
     }
   } catch (error) {
-    console.error('Error during email verification:', error.message);
+    console.error('Unexpected error during email verification:', error.message);
     message = 'Something went wrong during email verification.';
-    status = 'fail';
-
-    if (error.name === 'JsonWebTokenError') {
-      message = 'Invalid token. Please request a new verification email.';
-    } else if (error.name === 'TokenExpiredError') {
-      message = 'Verification link has expired. Please request a new verification email.';
-    }
   }
 
-  return res.redirect(`${baseFrontURL}/verification-result?status=${status}&message=${encodeURIComponent(message)}`);
+  // **Final Step: Redirect to the verification result page with status and message**
+  return res.redirect(
+      `${FRONTEND_URL}/verification-result?status=${status}&message=${encodeURIComponent(message)}`
+  );
 };
 
 
@@ -157,7 +189,7 @@ exports.generateToken = generateToken;
 
 async function sendVerificationLink(token, email) {
   try {
-    const url = `${BackEndURL}/api/auth/verify/${token}`;
+    const url = `${AuthServerURL}/api/auth/verify/${token}`;
     const emailSubject = 'Verify your getValleyTickets account.';
 
     const emailContent = `
@@ -165,7 +197,7 @@ async function sendVerificationLink(token, email) {
           <p>Please click the following link to verify your email:</p>
           <a href="${url}">Verify Email</a>
         `;
-    const emailSent = axios.post(`${BackEndURL}/email/verify/sendVerification`, {
+    const emailSent = await axios.post(`${BackEndURL}/email/verify/sendVerification`, {
       email,
       emailSubject,
       emailContent,

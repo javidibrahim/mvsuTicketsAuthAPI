@@ -20,7 +20,7 @@ exports.authenticateToken = async (req, res, next) => {
                 console.log('Access token not valid');
                 return res.sendStatus(403);
             }
-            console.log('Access is ok');
+            console.log('Access is ok, user:', user);
             req.user = user;
             next();
         });
@@ -53,30 +53,33 @@ exports.isVerified = async (req, res, next) => {
         if (!emailAddress) {
             return res.status(400).json({ error: 'Email is required' });
         }
-        console.log("Checking verification for emailAddress:", emailAddress);
 
         const response = await axios.get(`${BackEndURL}/user/profile`, {
             params: { emailAddress }
-        })
+        });
 
-        const user = response.data;
+        const user = response.data.user;
         if (!user) {
             return res.status(404).json({ error: 'User not found.', errorType: 'user_not_found' });
         }
-        console.log("User data", user);
 
-        if (user.isVerified === 0) {
+        if (user.verified === 0) {
             const userData = {
                 userID: user.userID,
                 emailAddress,
             };
-            const token = await generateToken(userData, process.env.EMAIL_TOKEN_SECRET, '30m');
-            const linkSent = await sendVerificationLink(token, emailAddress);
+            const tokenResponse = await generateToken(userData, process.env.EMAIL_TOKEN_SECRET, '30m');
+            if (!tokenResponse) {
+                console.error('Failed to generate token:', tokenResponse);
+                return res.status(500).json({ error: 'Failed to generate token.', errorType: 'token_generation_failure' });
+            }
+            const linkSent = await sendVerificationLink(tokenResponse, emailAddress);
             if (!linkSent) {
                 return res.status(500).json({ error: 'Failed to send verification link.', errorType: 'email_send_failure' });
             }
             return res.status(401).json({ error: 'Account not verified. Please check your email for verification link.', errorType: 'verification_required' });
         }
+        console.log("User is verified, proceeding to next middleware...");
         next();
     } catch (e) {
         console.error('Error verifying user:', e.response ? e.response.data : e.message);
